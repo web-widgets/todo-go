@@ -1,0 +1,5 @@
+.idea
+.vscode
+todo-go
+db.sqlite
+__debug_bin
