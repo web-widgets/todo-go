@@ -1,0 +1,22 @@
+[
+  {
+    "id": 1,
+    "label": "Don Smith",
+    "avatar": "https://snippet.dhtmlx.com/codebase/data/common/img/02/avatar_61.jpg"
+  },
+  {
+    "id": 2,
+    "label": "Nadia Chasey",
+    "avatar": "https://snippet.dhtmlx.com/codebase/data/common/img/02/avatar_63.jpg"
+  },
+  {
+    "id": 3,
+    "label": "Mike Young",
+    "avatar": "https://snippet.dhtmlx.com/codebase/data/common/img/02/avatar_03.jpg"
+  },
+  {
+    "id": 4,
+    "label": "Elvira Webb",
+    "avatar": "https://snippet.dhtmlx.com/codebase/data/common/img/02/avatar_33.jpg"
+  }
+]
