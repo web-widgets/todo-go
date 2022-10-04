@@ -1,13 +1,15 @@
 package data
 
 import (
+	"fmt"
+
 	"gorm.io/gorm"
 )
 
 type TaskUpdate struct {
 	TaskProps
 	HelperID int    `json:"targetId"`
-	Bunch    []Task `json:"bunch"`
+	Batch    []Task `json:"batch"`
 }
 
 type TaskTemp struct {
@@ -22,13 +24,14 @@ type MoveInfo struct {
 	ProjectID int    `json:"project"`
 	Operation string `json:"operation"`
 	Reverse   bool   `json:"reverse"`
+	Batch     []int  `json:"batch,omitempty"`
 }
 
 type PasteInfo struct {
 	HelperID  int        `json:"targetId"`
 	ParentID  int        `json:"parent"`
 	ProjectID int        `json:"project"`
-	Bunch     []TaskTemp `json:"bunch"`
+	Batch     []TaskTemp `json:"batch"`
 }
 
 type TasksDAO struct {
@@ -110,13 +113,27 @@ func (d *TasksDAO) Add(update *TaskUpdate) (int, error) {
 }
 
 func (d *TasksDAO) Update(id int, update *TaskUpdate) (err error) {
+	tx := d.openTX()
+	defer d.closeTX(tx, err)
+
+	if len(update.Batch) > 0 {
+		for _, v := range update.Batch {
+			t := Task{}
+			err = d.db.Find(&t, v.ID).Error
+			if err != nil {
+				return
+			}
+			err = tx.Save(&v).Error
+			if err != nil {
+				return
+			}
+		}
+	}
+
 	task, err := d.GetOne(id)
 	if err != nil {
 		return
 	}
-
-	tx := d.openTX()
-	defer d.closeTX(tx, err)
 
 	task.Text = update.Text
 	task.Checked = update.Checked
@@ -138,21 +155,6 @@ func (d *TasksDAO) Update(id int, update *TaskUpdate) (err error) {
 	if err != nil {
 		return
 	}
-
-	if len(update.Bunch) > 0 {
-		for _, v := range update.Bunch {
-			t := Task{}
-			err = d.db.Find(&t, v.ID).Error
-			if err != nil {
-				return
-			}
-			err = tx.Save(&v).Error
-			if err != nil {
-				return
-			}
-		}
-	}
-
 	return
 }
 
@@ -179,7 +181,7 @@ func (d *TasksDAO) Delete(id int) error {
 }
 
 func (d *TasksDAO) Move(id int, info *MoveInfo) error {
-	if id == info.ParentID || id == info.HelperID {
+	if id != 0 && id == info.ParentID || id == info.HelperID {
 		return nil
 	}
 
@@ -193,7 +195,7 @@ func (d *TasksDAO) Move(id int, info *MoveInfo) error {
 }
 
 func (d *TasksDAO) Paste(info *PasteInfo) (idPull map[string]int, err error) {
-	if info == nil || len(info.Bunch) == 0 {
+	if info == nil || len(info.Batch) == 0 {
 		return nil, nil
 	}
 
@@ -205,7 +207,7 @@ func (d *TasksDAO) Paste(info *PasteInfo) (idPull map[string]int, err error) {
 		return
 	}
 
-	task := info.Bunch[0].toModel()
+	task := info.Batch[0].toModel()
 	task.ParentID = info.ParentID
 	index := helperTask.Index
 
@@ -222,13 +224,13 @@ func (d *TasksDAO) Paste(info *PasteInfo) (idPull map[string]int, err error) {
 	}
 
 	idPull = make(map[string]int)
-	idPull[info.Bunch[0].ID] = task.ID
+	idPull[info.Batch[0].ID] = task.ID
 
-	if len(info.Bunch) > 1 {
+	if len(info.Batch) > 1 {
 		indexPull := make(map[int]int)
 
-		for i := 1; i < len(info.Bunch); i++ {
-			v := info.Bunch[i]
+		for i := 1; i < len(info.Batch); i++ {
+			v := info.Batch[i]
 			task := v.toModel()
 			task.ParentID = idPull[v.ParentID]
 			task.Index = indexPull[task.ParentID]
@@ -305,30 +307,106 @@ func (d *TasksDAO) moveToProject(id int, info *MoveInfo) error {
 		_, err = d.updateIndex(oldProject, oldParent, oldIndex, -1)
 	}
 
-	return nil
+	return err
 }
 
 func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
-	var task, helperTask *Task
-	task, err := d.GetOne(id)
+	if id == 0 && len(info.Batch) == 0 {
+		return fmt.Errorf("incorrect params")
+	}
+
+	// ids := make([]int, 0)
+	err := d.db.Model(&Task{}).Select("id").Where("id IN ?", info.Batch).Order("`index`").Scan(&info.Batch).Error
 	if err != nil {
 		return err
 	}
 
-	if info.Reverse {
-		helperTask, err = d.GetOne(info.HelperID)
-	} else {
-		helperTask, err = d.getNextTaskByIndex(task.ProjectID, task.ParentID, task.Index)
-	}
-	if err != nil || helperTask == nil {
-		return err
+	var tasks []Task
+	var task *Task
+	if id != 0 {
+		task, err = d.GetOne(id)
+		if err != nil {
+			return err
+		}
 	}
 
-	task.Index, helperTask.Index = helperTask.Index, task.Index
-	err = d.db.Save(&task).Error
-	if err == nil {
-		err = d.db.Save(&helperTask).Error
+	helperTask, err := d.GetOne(info.HelperID)
+	if err != nil {
+		return err
 	}
+	project := helperTask.ProjectID
+
+	// get previous task
+	if info.Reverse {
+		helperTask, err = d.getPrevTaskByIndex(helperTask.ProjectID, helperTask.ParentID, helperTask.Index)
+		if err != nil {
+			return err
+		}
+	}
+
+	// move at the top
+	if helperTask == nil {
+		index, err := d.getMinIndex(project, info.ParentID)
+		if err != nil {
+			return err
+		}
+		if task != nil {
+			task.Index = index
+		} else {
+			// batch move
+			for i, id := range info.Batch {
+				t, err := d.GetOne(id)
+				if err != nil {
+					return err
+				}
+
+				t.Index = index
+				t.ParentID = info.ParentID
+				tasks = append(tasks, *t)
+				index = index - len(info.Batch) - i - 1
+			}
+		}
+	} else {
+		offset := 1
+		if task == nil {
+			offset = len(info.Batch)
+		}
+		dir, err := d.updateIndex(project, info.ParentID, helperTask.Index, offset)
+		if err != nil {
+			return err
+		}
+		if task != nil {
+			task.Index = helperTask.Index
+			if dir > 0 {
+				task.Index++
+			}
+		} else {
+			// batch move
+			index := helperTask.Index
+			for i, id := range info.Batch {
+				t, err := d.GetOne(id)
+				if err != nil {
+					return err
+				}
+				
+				t.ParentID = info.ParentID
+				if dir > 0 {
+					index++
+				} else {
+					index = index - len(info.Batch) - i - 1
+				}
+				t.Index = index
+				tasks = append(tasks, *t)
+			}
+		}
+	}
+
+	if task != nil {
+		err = d.db.Save(&task).Error
+	} else {
+		err = d.db.Save(&tasks).Error
+	}
+
 	return err
 }
 
@@ -417,6 +495,19 @@ func (d *TasksDAO) getNextTaskByIndex(projectID, parentID, index int) (*Task, er
 	return &task, err
 }
 
+func (d *TasksDAO) getPrevTaskByIndex(projectID, parentID, index int) (*Task, error) {
+	task := Task{}
+	err := d.db.
+		Where("project = ? AND parent = ? AND `index` < ?", projectID, parentID, index).
+		Order("`index` DESC").
+		Take(&task).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+
+	return &task, err
+}
+
 func (d *TasksDAO) getMinDistance(projectID, parentID, index int) (int, error) {
 	var toEnd, toStart int64
 	err := d.db.Model(&Task{}).
@@ -449,6 +540,9 @@ func (d *TasksDAO) updateIndex(projectID, parentID, from, offset int) (dir int, 
 
 func (d *TasksDAO) updateIndexTX(projectID, parentID, from, offset int, tx *gorm.DB) (dir int, err error) {
 	direction, err := d.getMinDistance(projectID, parentID, from)
+	if err != nil {
+		return 0, err
+	}
 
 	if direction < 0 {
 		// update index to the start where 'index' <= 'from'
@@ -462,7 +556,7 @@ func (d *TasksDAO) updateIndexTX(projectID, parentID, from, offset int, tx *gorm
 			Update("index", gorm.Expr("`index` + ?", offset)).Error
 	}
 
-	return direction, nil
+	return direction, err
 }
 
 func (d *TasksDAO) getChildrenIDs(projectID, taskID int) ([]int, error) {

@@ -2,7 +2,7 @@ package data
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"os"
 )
 
 func dataUp(d *DAO) (err error) {
@@ -67,7 +67,7 @@ func dataUp(d *DAO) (err error) {
 }
 
 func parseDemodata(dest interface{}, path string) error {
-	bytes, err := ioutil.ReadFile(path)
+	bytes, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
