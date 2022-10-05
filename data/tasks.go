@@ -315,11 +315,12 @@ func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
 		return fmt.Errorf("incorrect params")
 	}
 
-	// ids := make([]int, 0)
-	err := d.db.Model(&Task{}).Select("id").Where("id IN ?", info.Batch).Order("`index`").Scan(&info.Batch).Error
+	helperTask, err := d.GetOne(info.HelperID)
 	if err != nil {
 		return err
 	}
+	parent := helperTask.ParentID
+	project := helperTask.ProjectID
 
 	var tasks []Task
 	var task *Task
@@ -328,13 +329,8 @@ func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
 		if err != nil {
 			return err
 		}
+		task.ParentID = parent
 	}
-
-	helperTask, err := d.GetOne(info.HelperID)
-	if err != nil {
-		return err
-	}
-	project := helperTask.ProjectID
 
 	// get previous task
 	if info.Reverse {
@@ -346,7 +342,7 @@ func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
 
 	// move at the top
 	if helperTask == nil {
-		index, err := d.getMinIndex(project, info.ParentID)
+		index, err := d.getMinIndex(project, parent)
 		if err != nil {
 			return err
 		}
@@ -360,16 +356,21 @@ func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
 					return err
 				}
 
-				t.Index = index
 				t.ParentID = info.ParentID
+				t.Index = index - len(info.Batch) + i - 1
 				tasks = append(tasks, *t)
-				index = index - len(info.Batch) - i - 1
 			}
 		}
 	} else {
+		for _, id := range info.Batch {
+			if id == helperTask.ID {
+				return nil
+			}
+		}
+
 		offset := 1
 		if task == nil {
-			offset = len(info.Batch)
+			offset = len(info.Batch) + 1
 		}
 		dir, err := d.updateIndex(project, info.ParentID, helperTask.Index, offset)
 		if err != nil {
@@ -388,14 +389,13 @@ func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
 				if err != nil {
 					return err
 				}
-				
-				t.ParentID = info.ParentID
+
 				if dir > 0 {
-					index++
+					t.Index = index + i + 1
 				} else {
-					index = index - len(info.Batch) - i - 1
+					t.Index = index - len(info.Batch) + i
 				}
-				t.Index = index
+				t.ParentID = info.ParentID
 				tasks = append(tasks, *t)
 			}
 		}
