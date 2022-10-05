@@ -2,6 +2,7 @@ package data
 
 import (
 	"fmt"
+	"web-widgets/todo-go/common"
 
 	"gorm.io/gorm"
 )
@@ -19,12 +20,12 @@ type TaskTemp struct {
 }
 
 type MoveInfo struct {
-	ParentID  int    `json:"parent"`
-	HelperID  int    `json:"targetId"`
-	ProjectID int    `json:"project"`
-	Operation string `json:"operation"`
-	Reverse   bool   `json:"reverse"`
-	Batch     []int  `json:"batch,omitempty"`
+	ParentID  int             `json:"parent"`
+	HelperID  int             `json:"targetId"`
+	ProjectID common.FuzzyInt `json:"project"`
+	Operation string          `json:"operation"`
+	Reverse   bool            `json:"reverse"`
+	Batch     []int           `json:"batch,omitempty"`
 }
 
 type PasteInfo struct {
@@ -181,10 +182,6 @@ func (d *TasksDAO) Delete(id int) error {
 }
 
 func (d *TasksDAO) Move(id int, info *MoveInfo) error {
-	if id != 0 && id == info.ParentID || id == info.HelperID {
-		return nil
-	}
-
 	switch info.Operation {
 	case "project":
 		return d.moveToProject(id, info)
@@ -268,46 +265,51 @@ func (d *TasksDAO) closeTX(tx *gorm.DB, err error) {
 	}
 }
 
-func (d *TasksDAO) moveToProject(id int, info *MoveInfo) error {
-	var task Task
-	err := d.db.Find(&task, id).Error
+func (d *TasksDAO) moveToProject(id int, info *MoveInfo) (err error) {
+	if id != 0 {
+		info.Batch = []int{id}
+	}
+
+	tx := d.openTX()
+	defer d.closeTX(tx, err)
+
+	index, err := d.getMaxIndex(int(info.ProjectID), 0)
 	if err != nil {
 		return err
 	}
-
-	oldProject := task.ProjectID
-	oldParent := task.ParentID
-	oldIndex := task.Index
-
-	task.ParentID = 0
-	task.ProjectID = info.ProjectID
-	task.Index, err = d.getMaxIndex(info.ProjectID, 0)
-	if err != nil {
-		return err
-	}
-
-	err = d.db.Save(task).Error
-	if err != nil {
-		return err
-	}
-
-	taskChildren, err := d.getChildrenIDs(oldProject, id)
-	if err != nil {
-		return err
-	}
-
-	if len(taskChildren) > 0 {
-		err = d.db.Model(&Task{}).Where("id IN ?", taskChildren).Update("project", info.ProjectID).Error
+	for _, id := range info.Batch {
+		var task Task
+		err := tx.Find(&task, id).Error
 		if err != nil {
 			return err
 		}
+
+		oldProject := task.ProjectID
+
+		task.ParentID = 0
+		task.ProjectID = int(info.ProjectID)
+		task.Index = index
+		index++
+
+		err = tx.Save(task).Error
+		if err != nil {
+			return err
+		}
+
+		taskChildren, err := d.getChildrenIDs(oldProject, id)
+		if err != nil {
+			return err
+		}
+
+		if len(taskChildren) > 0 {
+			err = tx.Model(&Task{}).Where("id IN ?", taskChildren).Update("project", info.ProjectID).Error
+			if err != nil {
+				return err
+			}
+		}
 	}
 
-	if err == nil {
-		_, err = d.updateIndex(oldProject, oldParent, oldIndex, -1)
-	}
-
-	return err
+	return nil
 }
 
 func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
