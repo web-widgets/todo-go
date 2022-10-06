@@ -20,12 +20,14 @@ type TaskTemp struct {
 }
 
 type MoveInfo struct {
+	ID        int             `json:"id"`
 	ParentID  int             `json:"parent"`
 	HelperID  int             `json:"targetId"`
 	ProjectID common.FuzzyInt `json:"project"`
 	Operation string          `json:"operation"`
 	Reverse   bool            `json:"reverse"`
 	Batch     []int           `json:"batch,omitempty"`
+	BatchMove []MoveInfo      `json:"opbatch,omitempty"`
 }
 
 type PasteInfo struct {
@@ -182,6 +184,16 @@ func (d *TasksDAO) Delete(id int) error {
 }
 
 func (d *TasksDAO) Move(id int, info *MoveInfo) error {
+	if len(info.BatchMove) > 0 {
+		for _, b := range info.BatchMove {
+			err := d.shiftTask(b.ID, &b)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	switch info.Operation {
 	case "project":
 		return d.moveToProject(id, info)
