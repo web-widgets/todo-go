@@ -96,7 +96,7 @@ func (d *TasksDAO) Add(update *TaskUpdate) (int, error) {
 			// add task below
 			index = helperTask.Index
 			var direction int
-			direction, err = d.updateIndex(helperTask.ProjectID, helperTask.ParentID, index, 1)
+			direction, err = d.updateIndex(helperTask.ProjectID, helperTask.ParentID, index, 1, nil)
 			if direction > 0 {
 				index++
 			}
@@ -171,13 +171,9 @@ func (d *TasksDAO) Delete(id int) error {
 		return err
 	}
 	ids = append(ids, id)
-
 	err = d.db.Exec("DELETE FROM assigned_users WHERE task_id IN ?", ids).Error
 	if err == nil {
 		err = d.db.Where("id IN ?", ids).Delete(&Task{}).Error
-	}
-	if err == nil {
-		_, err = d.updateIndex(root.ProjectID, root.ParentID, root.Index, -1)
 	}
 
 	return err
@@ -216,42 +212,62 @@ func (d *TasksDAO) Paste(info *PasteInfo) (idPull map[string]int, err error) {
 		return
 	}
 
-	task := info.Batch[0].toModel()
-	task.ParentID = info.ParentID
-	index := helperTask.Index
-
-	var dir int
-	dir, err = d.updateIndexTX(helperTask.ProjectID, helperTask.ParentID, index, 1, tx)
-	if dir > 0 {
-		index++
+	// divide into independent parents and cloneable childs
+	roots := make([]TaskTemp, 0)
+	childs := make([]TaskTemp, 0)
+	offset := 0
+	for _, t := range info.Batch {
+		isChild := false
+		for _, t2 := range info.Batch {
+			if t2.ID == t.ParentID {
+				isChild = true
+				childs = append(childs, t)
+				break
+			}
+		}
+		if !isChild {
+			roots = append(roots, t)
+			offset++
+		}
 	}
 
-	task.Index = index
-	err = tx.Create(&task).Error
+	// create space for clonable tasks
+	index := helperTask.Index
+	dir, err := d.updateIndexTX(helperTask.ProjectID, helperTask.ParentID, helperTask.Index, offset, nil, tx)
 	if err != nil {
 		return nil, err
 	}
+	if dir > 0 {
+		index++
+	} else {
+		index -= offset - 1
+	}
 
+	// insert roots
 	idPull = make(map[string]int)
-	idPull[info.Batch[0].ID] = task.ID
+	for _, t := range roots {
+		task := t.toModel()
+		task.ParentID = info.ParentID
+		task.Index = index
+		index++
 
-	if len(info.Batch) > 1 {
-		indexPull := make(map[int]int)
-
-		for i := 1; i < len(info.Batch); i++ {
-			v := info.Batch[i]
-			task := v.toModel()
-			task.ParentID = idPull[v.ParentID]
-			task.Index = indexPull[task.ParentID]
-
-			err := tx.Create(&task).Error
-			if err != nil {
-				return nil, err
-			}
-
-			idPull[v.ID] = task.ID
-			indexPull[task.ParentID]++
+		err := tx.Create(&task).Error
+		if err != nil {
+			return nil, err
 		}
+		idPull[t.ID] = task.ID
+	}
+
+	// insert childs
+	for _, t := range childs {
+		task := t.toModel()
+		task.ParentID = idPull[t.ParentID]
+
+		err := tx.Create(&task).Error
+		if err != nil {
+			return nil, err
+		}
+		idPull[t.ID] = task.ID
 	}
 
 	return idPull, nil
@@ -386,7 +402,7 @@ func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
 		if task == nil {
 			offset = len(info.Batch) + 1
 		}
-		dir, err := d.updateIndex(project, info.ParentID, helperTask.Index, offset)
+		dir, err := d.updateIndex(project, info.ParentID, helperTask.Index, offset, nil)
 		if err != nil {
 			return err
 		}
@@ -439,7 +455,7 @@ func (d *TasksDAO) shiftTask(id int, info *MoveInfo) error {
 		}
 		index, err = d.getMaxIndex(task.ProjectID, info.ParentID)
 		if err == nil {
-			_, err = d.updateIndex(task.ProjectID, task.ParentID, parentTask.Index, -1)
+			_, err = d.updateIndex(task.ProjectID, task.ParentID, parentTask.Index, -1, nil)
 		}
 	} else {
 		parentTask, err = d.GetOne(task.ParentID)
@@ -456,7 +472,7 @@ func (d *TasksDAO) shiftTask(id int, info *MoveInfo) error {
 		} else {
 			index = nextTask.Index
 			var dir int
-			dir, err = d.updateIndex(task.ProjectID, parentTask.ParentID, index-1, 1)
+			dir, err = d.updateIndex(task.ProjectID, parentTask.ParentID, index-1, 1, nil)
 			if dir < 0 {
 				index--
 			}
@@ -548,14 +564,18 @@ func (d *TasksDAO) getMinDistance(projectID, parentID, index int) (int, error) {
 	return 1, nil
 }
 
-func (d *TasksDAO) updateIndex(projectID, parentID, from, offset int) (dir int, err error) {
-	return d.updateIndexTX(projectID, parentID, from, offset, d.db)
+func (d *TasksDAO) updateIndex(projectID, parentID, from, offset int, except []int) (dir int, err error) {
+	return d.updateIndexTX(projectID, parentID, from, offset, except, d.db)
 }
 
-func (d *TasksDAO) updateIndexTX(projectID, parentID, from, offset int, tx *gorm.DB) (dir int, err error) {
+func (d *TasksDAO) updateIndexTX(projectID, parentID, from, offset int, except []int, tx *gorm.DB) (dir int, err error) {
 	direction, err := d.getMinDistance(projectID, parentID, from)
 	if err != nil {
 		return 0, err
+	}
+
+	if except == nil {
+		except = []int{}
 	}
 
 	if direction < 0 {
