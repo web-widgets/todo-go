@@ -108,6 +108,15 @@ func initRoutes(r chi.Router, dao *data.DAO) {
 		sendResponse(w, pull, err)
 	})
 
+	r.Put("/sort", func(w http.ResponseWriter, r *http.Request) {
+		info := data.SortInfo{}
+		err := parseFormObject(w, r, &info)
+		if err == nil {
+			err = dao.Tasks.Sort(&info)
+		}
+		sendResponse(w, nil, err)
+	})
+
 }
 
 func sendResponse(w http.ResponseWriter, data interface{}, err error) {

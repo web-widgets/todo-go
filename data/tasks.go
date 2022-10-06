@@ -2,6 +2,7 @@ package data
 
 import (
 	"fmt"
+	"time"
 	"web-widgets/todo-go/common"
 
 	"gorm.io/gorm"
@@ -35,6 +36,11 @@ type PasteInfo struct {
 	ParentID  int        `json:"parent"`
 	ProjectID int        `json:"project"`
 	Batch     []TaskTemp `json:"batch"`
+}
+
+type SortInfo struct {
+	By        string `json:"by"`
+	Direction string `json:"dir"`
 }
 
 type TasksDAO struct {
@@ -110,6 +116,8 @@ func (d *TasksDAO) Add(update *TaskUpdate) (int, error) {
 	}
 	task := update.toModel()
 	task.Index = index
+	now := time.Now()
+	task.CreationDate = &now
 	err = d.db.Create(&task).Error
 
 	return int(task.ID), err
@@ -273,6 +281,54 @@ func (d *TasksDAO) Paste(info *PasteInfo) (idPull map[string]int, err error) {
 	return idPull, nil
 }
 
+func (d *TasksDAO) Sort(info *SortInfo) error {
+	var err error
+	tx := d.openTX()
+	defer d.closeTX(tx, err)
+
+	if info.By == "text" {
+		info.By = "lower(" + info.By + ")"
+	}
+	tasks := make([]Task, 0)
+	err = tx.Order(info.By + " " + info.Direction).Find(&tasks).Error
+	if err != nil {
+		return err
+	}
+
+	// append tasks with null date at the end of array
+	if info.By != "text" && info.Direction == "asc" {
+		tasksWithDate := make([]Task, 0)
+		tasksWithoutDate := make([]Task, 0)
+		for _, t := range tasks {
+			if t.DueDate != nil {
+				tasksWithDate = append(tasksWithDate, t)
+			} else {
+				tasksWithoutDate = append(tasksWithoutDate, t)
+			}
+		}
+		tasks = append(tasksWithDate, tasksWithoutDate...)
+	}
+
+	indexPull := make(map[int]int)
+	index := 0
+	for _, t := range tasks {
+		if t.ParentID == 0 {
+			t.Index = index
+			index++
+		} else {
+			t.Index = indexPull[t.ParentID]
+			indexPull[t.ParentID]++
+		}
+
+		err := tx.Save(&t).Error
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // helpres
 
 func (d TaskProps) toModel() *Task {
@@ -349,7 +405,7 @@ func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
 	if err != nil {
 		return err
 	}
-	parent := helperTask.ParentID
+	parent := info.ParentID
 	project := helperTask.ProjectID
 
 	var tasks []Task
