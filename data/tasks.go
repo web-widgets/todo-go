@@ -91,7 +91,7 @@ func (d *TasksDAO) Add(update *TaskUpdate) (int, error) {
 
 		if update.HelperID == update.ParentID {
 			// add sub-task
-			index, err = d.getMinIndex(helperTask.ProjectID, helperTask.ID)
+			index, err = d.getMaxIndex(helperTask.ProjectID, helperTask.ID)
 		} else {
 			// add task below
 			index = helperTask.Index
