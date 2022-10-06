@@ -8,7 +8,7 @@ type TaskProps struct {
 	DueDate        *time.Time `json:"due_date,omitempty"`
 	CompletionDate *time.Time `json:"completion_date,omitempty"`
 	CreationDate   *time.Time `json:"creation_date,omitempty"`
-	EditionDate    *time.Time `json:"edited_date,omitempty"`
+	EditedDate     *time.Time `json:"edited_date,omitempty"`
 	ParentID       int        `json:"parent,omitempty" gorm:"column:parent"`
 	ProjectID      int        `json:"project,omitempty" gorm:"column:project"`
 

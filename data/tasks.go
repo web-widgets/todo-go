@@ -300,7 +300,29 @@ func (d *TasksDAO) Sort(info *SortInfo) error {
 		tasksWithDate := make([]Task, 0)
 		tasksWithoutDate := make([]Task, 0)
 		for _, t := range tasks {
-			if t.DueDate != nil {
+			hasDate := false
+			switch info.By {
+			case "due_date":
+				if t.DueDate != nil {
+					hasDate = true
+				}
+			case "creation_date":
+				if t.CreationDate != nil {
+					hasDate = true
+				}
+			case "edited_date":
+				if t.EditedDate != nil {
+					hasDate = true
+				}
+			case "completion_date":
+				if t.CompletionDate != nil {
+					hasDate = true
+				}
+			default:
+				fmt.Println("not emplemented yet: ", info.By)
+				return fmt.Errorf("not emplemented yet")
+			}
+			if hasDate {
 				tasksWithDate = append(tasksWithDate, t)
 			} else {
 				tasksWithoutDate = append(tasksWithoutDate, t)

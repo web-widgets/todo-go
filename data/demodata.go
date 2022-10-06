@@ -3,6 +3,7 @@ package data
 import (
 	"encoding/json"
 	"os"
+	"time"
 )
 
 func dataUp(d *DAO) (err error) {
@@ -49,6 +50,10 @@ func dataUp(d *DAO) (err error) {
 				return
 			}
 			tasks[i].AssignedUsers = users
+		}
+		if tasks[i].Checked {
+			now := time.Now()
+			tasks[i].CompletionDate = &now
 		}
 	}
 	err = tx.Create(&tasks).Error
