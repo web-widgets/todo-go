@@ -102,7 +102,7 @@ func (d *TasksDAO) Add(update *TaskUpdate) (int, error) {
 			// add task below
 			index = helperTask.Index
 			var direction int
-			direction, err = d.updateIndex(helperTask.ProjectID, helperTask.ParentID, index, 1, nil)
+			direction, err = d.updateIndex(helperTask.ProjectID, helperTask.ParentID, index, 1)
 			if direction > 0 {
 				index++
 			}
@@ -140,7 +140,7 @@ func (d *TasksDAO) Update(id int, update *TaskUpdate) (err error) {
 			}
 		}
 	}
-
+	
 	task, err := d.GetOne(id)
 	if err != nil {
 		return
@@ -149,6 +149,8 @@ func (d *TasksDAO) Update(id int, update *TaskUpdate) (err error) {
 	task.Text = update.Text
 	task.Checked = update.Checked
 	task.DueDate = update.DueDate
+	task.CompletionDate = update.CompletionDate
+	task.EditedDate = update.EditedDate
 
 	err = tx.Model(&task).Association("AssignedUsers").Clear()
 	if err != nil {
@@ -241,7 +243,7 @@ func (d *TasksDAO) Paste(info *PasteInfo) (idPull map[string]int, err error) {
 
 	// create space for clonable tasks
 	index := helperTask.Index
-	dir, err := d.updateIndexTX(helperTask.ProjectID, helperTask.ParentID, helperTask.Index, offset, nil, tx)
+	dir, err := d.updateIndexTX(helperTask.ProjectID, helperTask.ParentID, helperTask.Index, offset, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -304,21 +306,13 @@ func (d *TasksDAO) Sort(info *SortInfo) error {
 			hasDate := false
 			switch info.By {
 			case "due_date":
-				if t.DueDate != nil {
-					hasDate = true
-				}
+				hasDate = t.DueDate != nil
 			case "creation_date":
-				if t.CreationDate != nil {
-					hasDate = true
-				}
+				hasDate = t.CreationDate != nil 
 			case "edited_date":
-				if t.EditedDate != nil {
-					hasDate = true
-				}
+				hasDate = t.EditedDate != nil
 			case "completion_date":
-				if t.CompletionDate != nil {
-					hasDate = true
-				}
+				hasDate = t.CompletionDate!= nil
 			default:
 				fmt.Println("not emplemented yet: ", info.By)
 				return fmt.Errorf("not emplemented yet")
@@ -481,7 +475,7 @@ func (d *TasksDAO) moveTask(id int, info *MoveInfo) error {
 		if task == nil {
 			offset = len(info.Batch) + 1
 		}
-		dir, err := d.updateIndex(project, info.ParentID, helperTask.Index, offset, nil)
+		dir, err := d.updateIndex(project, info.ParentID, helperTask.Index, offset)
 		if err != nil {
 			return err
 		}
@@ -534,7 +528,7 @@ func (d *TasksDAO) shiftTask(id int, info *MoveInfo) error {
 		}
 		index, err = d.getMaxIndex(task.ProjectID, info.ParentID)
 		if err == nil {
-			_, err = d.updateIndex(task.ProjectID, task.ParentID, parentTask.Index, -1, nil)
+			_, err = d.updateIndex(task.ProjectID, task.ParentID, parentTask.Index, -1)
 		}
 	} else {
 		parentTask, err = d.GetOne(task.ParentID)
@@ -551,7 +545,7 @@ func (d *TasksDAO) shiftTask(id int, info *MoveInfo) error {
 		} else {
 			index = nextTask.Index
 			var dir int
-			dir, err = d.updateIndex(task.ProjectID, parentTask.ParentID, index-1, 1, nil)
+			dir, err = d.updateIndex(task.ProjectID, parentTask.ParentID, index-1, 1)
 			if dir < 0 {
 				index--
 			}
@@ -643,18 +637,14 @@ func (d *TasksDAO) getMinDistance(projectID, parentID, index int) (int, error) {
 	return 1, nil
 }
 
-func (d *TasksDAO) updateIndex(projectID, parentID, from, offset int, except []int) (dir int, err error) {
-	return d.updateIndexTX(projectID, parentID, from, offset, except, d.db)
+func (d *TasksDAO) updateIndex(projectID, parentID, from, offset int) (dir int, err error) {
+	return d.updateIndexTX(projectID, parentID, from, offset, d.db)
 }
 
-func (d *TasksDAO) updateIndexTX(projectID, parentID, from, offset int, except []int, tx *gorm.DB) (dir int, err error) {
+func (d *TasksDAO) updateIndexTX(projectID, parentID, from, offset int, tx *gorm.DB) (dir int, err error) {
 	direction, err := d.getMinDistance(projectID, parentID, from)
 	if err != nil {
 		return 0, err
-	}
-
-	if except == nil {
-		except = []int{}
 	}
 
 	if direction < 0 {

@@ -55,6 +55,8 @@ func dataUp(d *DAO) (err error) {
 			now := time.Now()
 			tasks[i].CompletionDate = &now
 		}
+		now := time.Now()
+		tasks[i].CreationDate = &now
 	}
 	err = tx.Create(&tasks).Error
 
