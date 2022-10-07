@@ -286,11 +286,12 @@ func (d *TasksDAO) Sort(info *SortInfo) error {
 	tx := d.openTX()
 	defer d.closeTX(tx, err)
 
+	var expr = info.By
 	if info.By == "text" {
-		info.By = "lower(" + info.By + ")"
+		expr = "lower(" + info.By + ")"
 	}
 	tasks := make([]Task, 0)
-	err = tx.Order(info.By + " " + info.Direction).Find(&tasks).Error
+	err = tx.Order(expr + " " + info.Direction).Find(&tasks).Error
 	if err != nil {
 		return err
 	}
