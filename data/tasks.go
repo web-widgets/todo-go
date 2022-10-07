@@ -269,9 +269,12 @@ func (d *TasksDAO) Paste(info *PasteInfo) (idPull map[string]int, err error) {
 	}
 
 	// insert childs
+	indexPull := make(map[string]int)
 	for _, t := range childs {
 		task := t.toModel()
 		task.ParentID = idPull[t.ParentID]
+		task.Index = indexPull[t.ParentID]
+		indexPull[t.ParentID]++
 
 		err := tx.Create(&task).Error
 		if err != nil {
